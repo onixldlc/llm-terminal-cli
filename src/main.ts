@@ -165,7 +165,11 @@ function buildRunArgs(opts: {
   const cwd = process.cwd();
   const hostConfig = resolveHostConfig(cfg);
 
-  mkdirSync(hostConfig, { recursive: true });
+  // only Claude-related paths persist; everything else ephemeral (container --rm wipes it)
+  const claudeDir = join(hostConfig, ".claude");
+  const claudeJson = join(hostConfig, ".claude.json");
+  mkdirSync(claudeDir, { recursive: true });
+  if (!existsSync(claudeJson)) writeFileSync(claudeJson, "{}");
 
   const z = selinux ? ":Z" : "";
   const args: string[] = ["run", "-it", "--rm"];
@@ -176,7 +180,8 @@ function buildRunArgs(opts: {
     args.push("--user", `${getUid()}:${getGid()}`);
   }
 
-  args.push("-v", `${hostConfig}:/home/dev${z}`);
+  args.push("-v", `${claudeDir}:/home/dev/.claude${z}`);
+  args.push("-v", `${claudeJson}:/home/dev/.claude.json${z}`);
   args.push("-v", `${cwd}:/home/dev/work${z}`);
   args.push("-w", "/home/dev/work");
 
