@@ -34,13 +34,16 @@ bun run install-local   # → ~/.local/bin/llm-terminal-cli
 ## Usage
 
 ```bash
-llm-terminal-cli                  # run claude code in current dir
-llm-terminal-cli -i               # interactive bash inside container (plugin install, debug)
-llm-terminal-cli --shell          # alias for -i
-llm-terminal-cli --version        # passes --version to claude
-llm-terminal-cli --help           # this help
-llm-terminal-cli --config         # show current config
-llm-terminal-cli --edit-config    # open config in $EDITOR
+llm-terminal-cli                    # resume last session in this dir (or start fresh)
+llm-terminal-cli --new              # start a new session (don't resume)
+llm-terminal-cli --sessions         # list all sessions for this dir
+llm-terminal-cli --sessions <id>    # resume specific session (id or prefix)
+llm-terminal-cli -i                 # interactive bash inside container (plugin install, debug)
+llm-terminal-cli --shell            # alias for -i
+llm-terminal-cli --version          # passes --version to claude
+llm-terminal-cli --help             # this help
+llm-terminal-cli --config           # show current config
+llm-terminal-cli --edit-config      # open config in $EDITOR
 ```
 
 Tip: alias it short.
@@ -48,6 +51,33 @@ Tip: alias it short.
 ```bash
 alias llm='llm-terminal-cli'
 ```
+
+### Sessions
+
+Per-directory session tracking. The CLI remembers the last session id used in each host directory and auto-resumes on next run.
+
+```bash
+cd ~/coding/project-a
+llm                          # first run: creates session abc123
+# ...do stuff, exit
+
+llm                          # second run: auto-resumes abc123
+llm --new                    # ignore last, start fresh session def456
+llm --sessions               # list all sessions, * marks last used here
+llm --sessions abc           # resume abc123 (prefix match)
+```
+
+Session list output:
+
+```
+sessions (3) — * = last used here:
+
+* 95979a7c  2026-04-19 17:42  help me debug this auth middleware
+  abc12345  2026-04-19 16:10  write a bun cli wrapper
+  def67890  2026-04-18 22:33  explain webpack loaders
+```
+
+Sessions stored by claude in `config_dir/.claude/projects/-home-dev-work/<uuid>.jsonl`. Per-directory mapping stored in `config_dir/sessions.json`.
 
 ## Config
 
