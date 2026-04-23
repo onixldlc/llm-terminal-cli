@@ -102,25 +102,60 @@ function listSessionsForProject(cfg: Config): Array<{ id: string; mtime: Date; s
   return out;
 }
 
+function isWrapperText(s: string): boolean {
+  const t = s.trimStart();
+  return t.startsWith("<command-message>")
+    || t.startsWith("<command-name>")
+    || t.startsWith("<command-args>")
+    || t.startsWith("<local-command-caveat>")
+    || t.startsWith("<system-reminder>")
+    || t.startsWith("<command-stdout>")
+    || t.startsWith("<command-stderr>");
+}
+
 function sessionPreview(cfg: Config, id: string): string {
   const projectsDir = join(resolveHostConfig(cfg), ".claude", "projects", "-home-dev-work");
   const f = join(projectsDir, `${id}.jsonl`);
   if (!existsSync(f)) return "";
   try {
     const content = readFileSync(f, "utf8");
-    // first user message as preview
+    // first real user message — skip meta entries and wrapper/caveat text
     for (const line of content.split("\n")) {
       if (!line.trim()) continue;
       const obj = JSON.parse(line);
-      if (obj.type === "user" && obj.message?.content) {
-        const c = typeof obj.message.content === "string"
-          ? obj.message.content
-          : obj.message.content[0]?.text ?? "";
-        return c.replace(/\s+/g, " ").slice(0, 80);
-      }
+      if (obj.type !== "user" || !obj.message?.content) continue;
+      if (obj.isMeta) continue;
+      const c = typeof obj.message.content === "string"
+        ? obj.message.content
+        : obj.message.content[0]?.text ?? "";
+      if (!c || isWrapperText(c)) continue;
+      return c.replace(/\s+/g, " ").slice(0, 80);
     }
   } catch { /* ignore */ }
   return "";
+}
+
+function sessionMeta(cfg: Config, id: string): { hostCwd?: string; gitBranch?: string } {
+  // host cwd — reverse lookup from sessions.json (container cwd is always /home/dev/work)
+  const map = loadSessions(cfg);
+  let hostCwd: string | undefined;
+  for (const [k, v] of Object.entries(map)) {
+    if (v === id) { hostCwd = k; break; }
+  }
+
+  // gitBranch from jsonl
+  let gitBranch: string | undefined;
+  const f = join(resolveHostConfig(cfg), ".claude", "projects", "-home-dev-work", `${id}.jsonl`);
+  if (existsSync(f)) {
+    try {
+      for (const line of readFileSync(f, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const obj = JSON.parse(line);
+        if (obj.gitBranch) { gitBranch = obj.gitBranch; break; }
+      }
+    } catch { /* ignore */ }
+  }
+  return { hostCwd, gitBranch };
 }
 
 // ──────────────── runtime detection ────────────────
@@ -212,6 +247,7 @@ Usage:
   ${BIN_NAME}                    Resume last session in this dir (or start fresh)
   ${BIN_NAME} --new              Start a new session (don't resume)
   ${BIN_NAME} --sessions         List all sessions for this dir
+  ${BIN_NAME} --sessions -v      List sessions with host path + git branch
   ${BIN_NAME} --sessions <id>    Resume specific session by id (or prefix)
   ${BIN_NAME} -i, --shell        Drop into interactive bash inside container
   ${BIN_NAME} -h, --help         Show this help
@@ -228,7 +264,7 @@ Default host config dir: ${DEFAULT_CONFIG.config_dir}
 `);
 }
 
-function printSessions(cfg: Config, cwd: string) {
+function printSessions(cfg: Config, cwd: string, verbose = false) {
   const sessions = listSessionsForProject(cfg);
   const last = getLastSessionId(cfg, cwd);
 
@@ -241,10 +277,16 @@ function printSessions(cfg: Config, cwd: string) {
   console.log(`sessions (${sessions.length}) — * = last used here:\n`);
   for (const s of sessions) {
     const marker = s.id === last ? "*" : " ";
-    const preview = sessionPreview(cfg, s.id);
+    const preview = sessionPreview(cfg, s.id) || "(no user message yet)";
     const short = s.id.slice(0, 8);
     const when = s.mtime.toISOString().slice(0, 16).replace("T", " ");
     console.log(`${marker} ${short}  ${when}  ${preview}`);
+    if (verbose) {
+      const meta = sessionMeta(cfg, s.id);
+      const path = meta.hostCwd ?? "(unknown — not tracked in sessions.json)";
+      const branch = meta.gitBranch ? ` [${meta.gitBranch}]` : "";
+      console.log(`             path: ${path}${branch}`);
+    }
   }
   console.log(`\nresume: ${BIN_NAME} --sessions <id-or-prefix>`);
 }
@@ -284,9 +326,10 @@ async function main() {
   // --sessions [id]
   const sessionsIdx = argv.indexOf("--sessions");
   if (sessionsIdx !== -1) {
+    const verbose = argv.includes("-v") || argv.includes("--verbose");
     const arg = argv[sessionsIdx + 1];
     if (!arg || arg.startsWith("-")) {
-      printSessions(cfg, cwd);
+      printSessions(cfg, cwd, verbose);
       return;
     }
     // resume specific
