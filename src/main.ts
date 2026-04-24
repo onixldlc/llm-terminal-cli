@@ -249,6 +249,7 @@ Usage:
   ${BIN_NAME} --sessions         List all sessions for this dir
   ${BIN_NAME} --sessions -v      List sessions with host path + git branch
   ${BIN_NAME} --sessions <id>    Resume specific session by id (or prefix)
+  ${BIN_NAME} --remote [args]    Run \`claude remote [args]\` (skips local session resume/tracking)
   ${BIN_NAME} -i, --shell        Drop into interactive bash inside container
   ${BIN_NAME} -h, --help         Show this help
   ${BIN_NAME} --config           Print config file path and current values
@@ -351,6 +352,20 @@ async function main() {
 
   const interactive = argv.includes("-i") || argv.includes("--shell");
   const forceNew = argv.includes("--new");
+
+  // --remote: translates to `claude remote [args]` — skips local session resume + tracking
+  const remoteIdx = argv.indexOf("--remote");
+  if (remoteIdx !== -1) {
+    const rest = argv.filter((_, i) => i !== remoteIdx);
+    const claudeArgs = ["remote", ...rest];
+    const runtime = detectRuntime(cfg.runtime);
+    const selinux = detectSelinux(cfg.selinux);
+    const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive: false, claudeArgs });
+    if (process.env.LLM_DEBUG) console.error(`[${BIN_NAME}] remote mode: ${runtime} ${runArgs.join(" ")}`);
+    const r = spawnSync(runtime, runArgs, { stdio: "inherit" });
+    process.exit(r.status ?? 1);
+  }
+
   const passthrough = argv.filter(a => !["-i", "--shell", "--new"].includes(a));
 
   // session resolution: --new wins, else last session id if exists
