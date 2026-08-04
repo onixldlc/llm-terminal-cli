@@ -38,6 +38,8 @@ llm-terminal-cli                    # resume last session in this dir (or start 
 llm-terminal-cli --new              # start a new session (don't resume)
 llm-terminal-cli --sessions         # list all sessions for this dir
 llm-terminal-cli --sessions <id>    # resume specific session (id or prefix)
+llm-terminal-cli --secure           # mount nothing (no config, no cwd) + least privilege
+llm-terminal-cli --read-only        # mount config dir and cwd read-only
 llm-terminal-cli -i                 # interactive bash inside container (plugin install, debug)
 llm-terminal-cli --shell            # alias for -i
 llm-terminal-cli --version          # passes --version to claude
@@ -45,6 +47,14 @@ llm-terminal-cli --help             # this help
 llm-terminal-cli --config           # show current config
 llm-terminal-cli --edit-config      # open config in $EDITOR
 ```
+
+### Isolation flags
+
+- `--secure` — no volumes at all. Host config dir and cwd are **not** mounted, so
+  nothing persists and there is no session resume/tracking. Also adds
+  `--cap-drop=ALL` and `--security-opt=no-new-privileges`. Combinable with `-i`.
+- `--read-only` — same mounts as usual, but `:ro` (`:ro,Z` under SELinux). The
+  container can read your cwd and config but cannot write back to the host.
 
 Tip: alias it short.
 

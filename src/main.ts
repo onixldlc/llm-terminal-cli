@@ -195,19 +195,23 @@ function buildRunArgs(opts: {
   selinux: boolean;
   interactive: boolean;
   claudeArgs: string[];
+  secure?: boolean;
+  readOnly?: boolean;
 }): string[] {
-  const { runtime, cfg, selinux, interactive, claudeArgs } = opts;
+  const { runtime, cfg, selinux, interactive, claudeArgs, secure = false, readOnly = false } = opts;
   const cwd = process.cwd();
   const hostConfig = resolveHostConfig(cfg);
 
-  // only Claude-related paths persist; everything else ephemeral (container --rm wipes it)
-  const claudeDir = join(hostConfig, ".claude");
-  const claudeJson = join(hostConfig, ".claude.json");
-  mkdirSync(claudeDir, { recursive: true });
-  if (!existsSync(claudeJson)) writeFileSync(claudeJson, "{}");
-
   const z = selinux ? ":Z" : "";
+  // read-only mounts: container can't write back to host paths
+  const mnt = readOnly ? (selinux ? ":ro,Z" : ":ro") : z;
   const args: string[] = ["run", "-it", "--rm"];
+
+  if (secure) {
+    // least privilege: drop all caps, no privilege escalation
+    args.push("--cap-drop=ALL");
+    args.push("--security-opt=no-new-privileges");
+  }
 
   if (runtime === "podman") {
     args.push("--userns=keep-id");
@@ -215,9 +219,18 @@ function buildRunArgs(opts: {
     args.push("--user", `${getUid()}:${getGid()}`);
   }
 
-  args.push("-v", `${claudeDir}:/home/dev/.claude${z}`);
-  args.push("-v", `${claudeJson}:/home/dev/.claude.json${z}`);
-  args.push("-v", `${cwd}:/home/dev/work${z}`);
+  // --secure mounts nothing: no host config, no host cwd. everything ephemeral.
+  if (!secure) {
+    // only Claude-related paths persist; everything else ephemeral (container --rm wipes it)
+    const claudeDir = join(hostConfig, ".claude");
+    const claudeJson = join(hostConfig, ".claude.json");
+    mkdirSync(claudeDir, { recursive: true });
+    if (!existsSync(claudeJson)) writeFileSync(claudeJson, "{}");
+
+    args.push("-v", `${claudeDir}:/home/dev/.claude${mnt}`);
+    args.push("-v", `${claudeJson}:/home/dev/.claude.json${mnt}`);
+    args.push("-v", `${cwd}:/home/dev/work${mnt}`);
+  }
   args.push("-w", "/home/dev/work");
 
   args.push("-e", `TERM=${process.env.TERM || "xterm-256color"}`);
@@ -250,11 +263,19 @@ Usage:
   ${BIN_NAME} --sessions -v      List sessions with host path + git branch
   ${BIN_NAME} --sessions <id>    Resume specific session by id (or prefix)
   ${BIN_NAME} --remote [args]    Run \`claude remote [args]\` (skips local session resume/tracking)
+  ${BIN_NAME} --secure           Mount nothing (no config, no cwd) + least privilege
+  ${BIN_NAME} --read-only        Mount config dir and cwd read-only
   ${BIN_NAME} -i, --shell        Drop into interactive bash inside container
   ${BIN_NAME} -h, --help         Show this help
   ${BIN_NAME} --config           Print config file path and current values
   ${BIN_NAME} --edit-config      Open config in $EDITOR
   ${BIN_NAME} [...args]          Pass extra args to claude (e.g. --version)
+
+Isolation:
+  --secure     No volumes at all: host config dir and cwd are not mounted.
+               Adds --cap-drop=ALL and --security-opt=no-new-privileges.
+               Nothing persists, no session resume/tracking. Combinable with -i.
+  --read-only  Same mounts as usual, but ro — container cannot write to host.
 
 Session tracking:
   Per-directory. Last session id stored in sessions.json in your config_dir.
@@ -312,6 +333,9 @@ async function main() {
   const cfg = loadConfig();
   const cwd = process.cwd();
 
+  const secure = argv.includes("--secure");
+  const readOnly = argv.includes("--read-only");
+
   if (argv.includes("--config")) {
     console.log(`config file: ${CONFIG_FILE}`);
     console.log(JSON.stringify(cfg, null, 2));
@@ -342,9 +366,11 @@ async function main() {
     setLastSessionId(cfg, cwd, resolved);
     const runtime = detectRuntime(cfg.runtime);
     const selinux = detectSelinux(cfg.selinux);
-    const rest = argv.filter((_, i) => i !== sessionsIdx && i !== sessionsIdx + 1);
+    const rest = argv
+      .filter((_, i) => i !== sessionsIdx && i !== sessionsIdx + 1)
+      .filter(a => !["--secure", "--read-only"].includes(a));
     const claudeArgs = ["--resume", resolved, ...rest];
-    const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive: false, claudeArgs });
+    const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive: false, claudeArgs, secure, readOnly });
     if (process.env.LLM_DEBUG) console.error(`[${BIN_NAME}] cmd: ${runtime} ${runArgs.join(" ")}`);
     const r = spawnSync(runtime, runArgs, { stdio: "inherit" });
     process.exit(r.status ?? 1);
@@ -356,21 +382,24 @@ async function main() {
   // --remote: translates to `claude remote [args]` — skips local session resume + tracking
   const remoteIdx = argv.indexOf("--remote");
   if (remoteIdx !== -1) {
-    const rest = argv.filter((_, i) => i !== remoteIdx);
+    const rest = argv
+      .filter((_, i) => i !== remoteIdx)
+      .filter(a => !["--secure", "--read-only"].includes(a));
     const claudeArgs = ["remote", ...rest];
     const runtime = detectRuntime(cfg.runtime);
     const selinux = detectSelinux(cfg.selinux);
-    const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive: false, claudeArgs });
+    const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive: false, claudeArgs, secure, readOnly });
     if (process.env.LLM_DEBUG) console.error(`[${BIN_NAME}] remote mode: ${runtime} ${runArgs.join(" ")}`);
     const r = spawnSync(runtime, runArgs, { stdio: "inherit" });
     process.exit(r.status ?? 1);
   }
 
-  const passthrough = argv.filter(a => !["-i", "--shell", "--new"].includes(a));
+  const passthrough = argv.filter(a => !["-i", "--shell", "--new", "--secure", "--read-only"].includes(a));
 
   // session resolution: --new wins, else last session id if exists
+  // --secure mounts no config dir, so there's no session state to resume
   const claudeArgs: string[] = [];
-  if (!interactive && !forceNew) {
+  if (!interactive && !forceNew && !secure) {
     const last = getLastSessionId(cfg, cwd);
     if (last) {
       // verify session file still exists
@@ -387,10 +416,10 @@ async function main() {
 
   const runtime = detectRuntime(cfg.runtime);
   const selinux = detectSelinux(cfg.selinux);
-  const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive, claudeArgs });
+  const runArgs = buildRunArgs({ runtime, cfg, selinux, interactive, claudeArgs, secure, readOnly });
 
   if (process.env.LLM_DEBUG) {
-    console.error(`[${BIN_NAME}] runtime=${runtime} selinux=${selinux} new=${forceNew}`);
+    console.error(`[${BIN_NAME}] runtime=${runtime} selinux=${selinux} new=${forceNew} secure=${secure} read-only=${readOnly}`);
     console.error(`[${BIN_NAME}] cmd: ${runtime} ${runArgs.join(" ")}`);
   }
 
@@ -398,7 +427,7 @@ async function main() {
 
   // after exit, if a new session was created, update tracking
   // find most recent session file, if different from what we resumed, save it
-  if (!interactive) {
+  if (!interactive && !secure) {
     const sessions = listSessionsForProject(cfg);
     if (sessions.length > 0) {
       const newest = sessions[0].id;
