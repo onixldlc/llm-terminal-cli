@@ -38,8 +38,8 @@ llm-terminal-cli                    # resume last session in this dir (or start 
 llm-terminal-cli --new              # start a new session (don't resume)
 llm-terminal-cli --sessions         # list all sessions for this dir
 llm-terminal-cli --sessions <id>    # resume specific session (id or prefix)
-llm-terminal-cli --secure           # mount nothing (no config, no cwd) + least privilege
-llm-terminal-cli --read-only        # mount config dir and cwd read-only
+llm-terminal-cli --secure           # don't mount cwd + least privilege (config still mounted)
+llm-terminal-cli --read-only        # mount cwd read-only
 llm-terminal-cli -i                 # interactive bash inside container (plugin install, debug)
 llm-terminal-cli --shell            # alias for -i
 llm-terminal-cli --version          # passes --version to claude
@@ -50,11 +50,12 @@ llm-terminal-cli --edit-config      # open config in $EDITOR
 
 ### Isolation flags
 
-- `--secure` — no volumes at all. Host config dir and cwd are **not** mounted, so
-  nothing persists and there is no session resume/tracking. Also adds
-  `--cap-drop=ALL` and `--security-opt=no-new-privileges`. Combinable with `-i`.
-- `--read-only` — same mounts as usual, but `:ro` (`:ro,Z` under SELinux). The
-  container can read your cwd and config but cannot write back to the host.
+- `--secure` — host cwd is **not** mounted, so the container starts with an empty
+  workdir and can't touch your files. Config dir is still mounted, so auth and
+  session resume keep working. Also adds `--cap-drop=ALL` and
+  `--security-opt=no-new-privileges`. Combinable with `-i`.
+- `--read-only` — host cwd mounted `:ro` (`:ro,Z` under SELinux). Container can
+  read your files but not write them. Config dir stays writable.
 
 Tip: alias it short.
 

@@ -203,8 +203,8 @@ function buildRunArgs(opts: {
   const hostConfig = resolveHostConfig(cfg);
 
   const z = selinux ? ":Z" : "";
-  // read-only mounts: container can't write back to host paths
-  const mnt = readOnly ? (selinux ? ":ro,Z" : ":ro") : z;
+  // read-only applies to the workdir mount only — config stays writable
+  const workMnt = readOnly ? (selinux ? ":ro,Z" : ":ro") : z;
   const args: string[] = ["run", "-it", "--rm"];
 
   if (secure) {
@@ -219,17 +219,17 @@ function buildRunArgs(opts: {
     args.push("--user", `${getUid()}:${getGid()}`);
   }
 
-  // --secure mounts nothing: no host config, no host cwd. everything ephemeral.
-  if (!secure) {
-    // only Claude-related paths persist; everything else ephemeral (container --rm wipes it)
-    const claudeDir = join(hostConfig, ".claude");
-    const claudeJson = join(hostConfig, ".claude.json");
-    mkdirSync(claudeDir, { recursive: true });
-    if (!existsSync(claudeJson)) writeFileSync(claudeJson, "{}");
+  // only Claude-related paths persist; everything else ephemeral (container --rm wipes it)
+  const claudeDir = join(hostConfig, ".claude");
+  const claudeJson = join(hostConfig, ".claude.json");
+  mkdirSync(claudeDir, { recursive: true });
+  if (!existsSync(claudeJson)) writeFileSync(claudeJson, "{}");
 
-    args.push("-v", `${claudeDir}:/home/dev/.claude${mnt}`);
-    args.push("-v", `${claudeJson}:/home/dev/.claude.json${mnt}`);
-    args.push("-v", `${cwd}:/home/dev/work${mnt}`);
+  args.push("-v", `${claudeDir}:/home/dev/.claude${z}`);
+  args.push("-v", `${claudeJson}:/home/dev/.claude.json${z}`);
+  // --secure leaves the workdir unmounted — container never sees host cwd
+  if (!secure) {
+    args.push("-v", `${cwd}:/home/dev/work${workMnt}`);
   }
   args.push("-w", "/home/dev/work");
 
@@ -263,8 +263,8 @@ Usage:
   ${BIN_NAME} --sessions -v      List sessions with host path + git branch
   ${BIN_NAME} --sessions <id>    Resume specific session by id (or prefix)
   ${BIN_NAME} --remote [args]    Run \`claude remote [args]\` (skips local session resume/tracking)
-  ${BIN_NAME} --secure           Mount nothing (no config, no cwd) + least privilege
-  ${BIN_NAME} --read-only        Mount config dir and cwd read-only
+  ${BIN_NAME} --secure           Don't mount cwd + least privilege (config still mounted)
+  ${BIN_NAME} --read-only        Mount cwd read-only
   ${BIN_NAME} -i, --shell        Drop into interactive bash inside container
   ${BIN_NAME} -h, --help         Show this help
   ${BIN_NAME} --config           Print config file path and current values
@@ -272,10 +272,11 @@ Usage:
   ${BIN_NAME} [...args]          Pass extra args to claude (e.g. --version)
 
 Isolation:
-  --secure     No volumes at all: host config dir and cwd are not mounted.
+  --secure     Host cwd is not mounted — container gets an empty workdir.
+               Config dir still mounted, so auth and sessions keep working.
                Adds --cap-drop=ALL and --security-opt=no-new-privileges.
-               Nothing persists, no session resume/tracking. Combinable with -i.
-  --read-only  Same mounts as usual, but ro — container cannot write to host.
+  --read-only  Host cwd mounted ro — container can read your files but not
+               write them. Config dir stays writable.
 
 Session tracking:
   Per-directory. Last session id stored in sessions.json in your config_dir.
@@ -397,9 +398,8 @@ async function main() {
   const passthrough = argv.filter(a => !["-i", "--shell", "--new", "--secure", "--read-only"].includes(a));
 
   // session resolution: --new wins, else last session id if exists
-  // --secure mounts no config dir, so there's no session state to resume
   const claudeArgs: string[] = [];
-  if (!interactive && !forceNew && !secure) {
+  if (!interactive && !forceNew) {
     const last = getLastSessionId(cfg, cwd);
     if (last) {
       // verify session file still exists
@@ -427,7 +427,7 @@ async function main() {
 
   // after exit, if a new session was created, update tracking
   // find most recent session file, if different from what we resumed, save it
-  if (!interactive && !secure) {
+  if (!interactive) {
     const sessions = listSessionsForProject(cfg);
     if (sessions.length > 0) {
       const newest = sessions[0].id;
