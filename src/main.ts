@@ -233,6 +233,10 @@ function buildRunArgs(opts: {
   }
   args.push("-w", "/home/dev/work");
 
+  // host.docker.internal isn't automatic on Linux — map it to the bridge gateway.
+  // needs docker 20.10+; podman 4.7+ adds it itself but the explicit entry is harmless.
+  args.push("--add-host=host.docker.internal:host-gateway");
+
   args.push("-e", `TERM=${process.env.TERM || "xterm-256color"}`);
   if (process.env.ANTHROPIC_API_KEY) {
     args.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
