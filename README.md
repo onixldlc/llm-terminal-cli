@@ -54,7 +54,7 @@ llm-terminal-cli --edit-config      # open config in $EDITOR
   workdir and can't touch your files. Config dir is still mounted, so auth and
   session resume keep working. Also adds `--cap-drop=ALL` and
   `--security-opt=no-new-privileges`. Combinable with `-i`.
-- `--read-only` — host cwd mounted `:ro` (`:ro,Z` under SELinux). Container can
+- `--read-only` — host cwd mounted `:ro` (`:ro,z` under SELinux). Container can
   read your files but not write them. Config dir stays writable.
 
 Tip: alias it short.
@@ -109,7 +109,7 @@ Auto-created on first run at `~/.config/llm-terminal-cli/config.json`:
 | `image` | string | Container image to run |
 | `config_dir` | path | Host dir mounted as container `$HOME`. Login, plugins, history persist here. Shared across all invocations. |
 | `runtime` | `auto` / `docker` / `podman` | `auto` prefers podman if both installed |
-| `selinux` | `auto` / `on` / `off` | `auto` runs `getenforce`, adds `:Z` to mounts on enforcing/permissive |
+| `selinux` | `auto` / `on` / `off` | `auto` runs `getenforce`, adds shared `:z` to mounts on enforcing/permissive so sessions can run concurrently |
 | `extra_args` | string[] | Extra args appended to runtime, e.g. `["--network=host"]` |
 
 ## Plugin install (one-time)
@@ -140,13 +140,12 @@ LLM_TERMINAL_CONFIG_DIR=/tmp/test-cfg llm-terminal-cli
 
 ## Releasing
 
-Push a tag matching `v*`:
+Change the `VERSION` file on `main`, from a local commit or GitHub's web editor:
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
+```text
+v0.2.4-r3
 ```
 
-CI builds binaries for all platforms and creates a GitHub release.
+CI builds binaries for all platforms, creates the git tag, and publishes a GitHub release. No manual tag needed. Use a new value each time, because reusing one updates that existing release.
 
-Manual release: Actions → Release → Run workflow → enter tag.
+Manual release: Actions → Release → Run workflow. Leave version empty to read `VERSION`, or uncheck publish to build only.

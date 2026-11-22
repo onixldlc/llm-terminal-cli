@@ -202,9 +202,10 @@ function buildRunArgs(opts: {
   const cwd = process.cwd();
   const hostConfig = resolveHostConfig(cfg);
 
-  const z = selinux ? ":Z" : "";
+  // shared label (:z) — private :Z would revoke access from other running sessions
+  const z = selinux ? ":z" : "";
   // read-only applies to the workdir mount only — config stays writable
-  const workMnt = readOnly ? (selinux ? ":ro,Z" : ":ro") : z;
+  const workMnt = readOnly ? (selinux ? ":ro,z" : ":ro") : z;
   const args: string[] = ["run", "-it", "--rm"];
 
   if (secure) {
